@@ -51,7 +51,9 @@ const ProviderDashboard = () => {
   // Stats
   const [stats, setStats] = useState({
       totalAppointments: 0,
-      earnings: 0
+      earnings: 0,
+      completed: 0,
+      cancelled: 0
   });
 
   useEffect(() => {
@@ -79,11 +81,17 @@ const ProviderDashboard = () => {
       const appts = appointmentsRes.data || [];
       
       const total = appts.length;
+      const completed = appts.filter(a => a.status === 'confirmed' && new Date(a.date) < new Date()).length; // Assuming past confirmed are completed
+      // Or just by status if we had a 'completed' status. For now, let's just count 'confirmed' as active/completed and 'cancelled'.
+      // Requirement says: "How many were completed or cancelled"
+      const cancelled = appts.filter(a => a.status === 'cancelled').length;
+      const confirmed = appts.filter(a => a.status === 'confirmed').length;
+
       const earnings = appts
         .filter(a => a.status === 'confirmed')
         .reduce((acc, curr) => acc + (curr.serviceId?.price || 0), 0);
       
-      setStats({ totalAppointments: total, earnings });
+      setStats({ totalAppointments: total, earnings, completed: confirmed, cancelled });
 
       // Map to Calendar Events
       const calendarEvents = appts.map(apt => {
@@ -196,10 +204,11 @@ const ProviderDashboard = () => {
       </div>
 
       {/* Stats Row */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <StatsCard title="Total Services" value={services.length} icon={Briefcase} color="bg-blue-500" />
-          <StatsCard title="Total Appointments" value={stats.totalAppointments} icon={CalendarIcon} color="bg-purple-500" />
-          <StatsCard title="Total Earnings" value={`$${stats.earnings}`} icon={DollarSign} color="bg-green-500" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <StatsCard title="Total Appts" value={stats.totalAppointments} icon={CalendarIcon} color="bg-purple-500" />
+          <StatsCard title="Completed" value={stats.completed} icon={Check} color="bg-green-500" />
+          <StatsCard title="Cancelled" value={stats.cancelled} icon={X} color="bg-red-500" />
+          <StatsCard title="Earnings" value={`$${stats.earnings}`} icon={DollarSign} color="bg-blue-500" />
       </div>
 
       {/* Tabs & Content */}

@@ -64,38 +64,33 @@ export const getAvailableSlots = async (req, res) => {
     let currentMinutes = getMinutes(schedule.startTime);
     const endMinutes = getMinutes(schedule.endTime);
 
+    // Get current time in minutes if the request date is today
+    const now = new Date();
+    const isToday = new Date(date).toDateString() === now.toDateString();
+    const currentTimeMinutes = isToday ? now.getHours() * 60 + now.getMinutes() : -1;
+
+    // Fetch appointments ONCE before loop for efficiency
+    const appointmentsWithService = await Appointment.find({
+      providerId: providerId,
+      date: {
+        $gte: startOfDay,
+        $lte: endOfDay
+      },
+      status: { $ne: 'cancelled' }
+    }).populate('serviceId');
+
     while (currentMinutes + serviceDuration <= endMinutes) {
       const slotStart = currentMinutes;
       const slotEnd = currentMinutes + serviceDuration;
 
-      // Check collision
-      const isBooked = appointments.some(appt => {
-        const apptStart = getMinutes(appt.slotTime);
-        // We need the service duration of the APPOINTMENT to know when it ends
-        // BUT, the appointment model stores serviceId. 
-        // OPTIMIZATION: We should probably store duration or endTime in Appointment for easier lookup.
-        // For now, we will assume we need to fetch that service, OR (better for this specific MVP request limits)
-        // we can cheat slightly if we don't assume variable durations for *other* slots, 
-        // OR we just populate service in the query.
-        
-        // Let's populate service to get duration of existing appointments
-        return false; // Will fix inside loop with populated data
-      });
-      
-      // Let's Fetch appointments WITH populated service to get duration
-      // Since we can't do async inside .some easily without fetching all first.
-      
-      // Re-fetch appointments with service populated
-      const appointmentsWithService = await Appointment.find({
-        providerId: providerId,
-        date: {
-          $gte: startOfDay,
-          $lte: endOfDay
-        },
-        status: { $ne: 'cancelled' }
-      }).populate('serviceId');
+      // Skip past slots if today
+      if (isToday && slotStart <= currentTimeMinutes) {
+         currentMinutes += 30;
+         continue;
+      }
 
       const isOverlapping = appointmentsWithService.some(appt => {
+        if (!appt.serviceId) return false; // Safety check
         const apptStart = getMinutes(appt.slotTime);
         const apptDuration = appt.serviceId.duration;
         const apptEnd = apptStart + apptDuration;
