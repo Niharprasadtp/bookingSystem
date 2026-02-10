@@ -4,8 +4,8 @@ const appointmentSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   providerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Provider', required: true },
   serviceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Service', required: true },
-  date: { type: Date, required: true }, // The specific day
-  slotTime: { type: String, required: true }, // e.g., "10:30"
+  date: { type: Date, required: true }, 
+  slotTime: { type: String, required: true }, 
   status: { 
     type: String, 
     enum: ['pending', 'confirmed', 'cancelled'], 
