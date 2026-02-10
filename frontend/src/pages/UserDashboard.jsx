@@ -1,64 +1,132 @@
 import { useContext, useEffect, useState } from "react";
 import AuthContext from "../context/AuthContext";
 import { Link } from "react-router-dom";
-import { User, Calendar, Clock, MapPin, CheckCircle, XCircle, AlertCircle } from "lucide-react";
+import { User, Calendar as CalendarIcon, Clock, MapPin, CheckCircle, XCircle, AlertCircle, RefreshCw } from "lucide-react";
+import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
+import format from 'date-fns/format';
+import parse from 'date-fns/parse';
+import startOfWeek from 'date-fns/startOfWeek';
+import getDay from 'date-fns/getDay';
+import enUS from 'date-fns/locale/en-US';
+import axios from "../api/axios";
+import toast from "react-hot-toast";
+import "react-big-calendar/lib/css/react-big-calendar.css";
+
+const locales = {
+  'en-US': enUS,
+};
+
+const localizer = dateFnsLocalizer({
+  format,
+  parse,
+  startOfWeek,
+  getDay,
+  locales,
+});
 
 const UserDashboard = () => {
   const { user } = useContext(AuthContext);
   const [providers, setProviders] = useState([]);
   const [appointments, setAppointments] = useState([]);
+  const [events, setEvents] = useState([]);
   const [activeTab, setActiveTab] = useState("browse");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1. Fetch Providers
-    const fetchProviders = async () => {
-        try {
-            const res = await fetch(`${import.meta.env.VITE_API_URL}/providers`);
-            const data = await res.json();
-            setProviders(data);
-        } catch (err) {
-            console.error(err);
-        }
-    };
-
-    // 2. Fetch My Appointments (Mocking this for now as endpoint wasn't explicitly asked for in Phase 1, 
-    // but requested in Phase 2 UI requirements. I'll mock it or add if easy, 
-    // but sticking to requested structure first. 
-    // ACTUALLY: The user asked for "Appointments Section: Display booked appointments".
-    // I need an endpoint for this. `GET /api/appointments/my-appointments`?
-    // It's not in the original list. I'll mock the data for UI demonstration if endpoint missing, 
-    // OR likely I should have added it. 
-    // "GET /api/appointments/slots" exists. "POST /api/appointments/book" exists.
-    // I made `appointmentRoutes` so I might have `GET /` there?
-    // Checking `appointmentController.js`: only `createAppointment` is there.
-    // I will mock the appointments data for now to fulfill the UI Requirement strictly 
-    // without breaking the backend task scope, or just add an empty state message.)
-    
-    // MOCK DATA for display purposes (since backend might not have it yet)
-    setAppointments([
-        { _id: '1', providerName: 'Dr. Smith', serviceName: 'General Checkup', date: '2024-03-15', time: '10:00', status: 'confirmed' },
-        { _id: '2', providerName: 'Salon Luxe', serviceName: 'Haircut', date: '2024-03-20', time: '14:30', status: 'pending' },
-        { _id: '3', providerName: 'Mike Mechanic', serviceName: 'Oil Change', date: '2024-02-10', time: '09:00', status: 'cancelled' },
-    ]);
-    
-    fetchProviders();
+    fetchData();
   }, []);
 
-  const getStatusBadge = (status) => {
-      switch(status) {
-          case 'confirmed': return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"><CheckCircle size={12} className="mr-1"/> Confirmed</span>;
-          case 'pending': return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800"><AlertCircle size={12} className="mr-1"/> Pending</span>;
-          case 'cancelled': return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800"><XCircle size={12} className="mr-1"/> Cancelled</span>;
-          default: return null;
+  const fetchData = async () => {
+      setLoading(true);
+      try {
+          // Parallel fetch
+          const [providersRes, appointmentsRes] = await Promise.all([
+              axios.get('/providers'),
+              axios.get('/appointments/my-appointments')
+          ]);
+
+          setProviders(providersRes.data);
+          setAppointments(appointmentsRes.data);
+
+          // Map appointments to Calendar Events
+          const calendarEvents = appointmentsRes.data.map(apt => {
+              // Parse date and time. Backend stores date as "2024-03-20T00:00:00.000Z" and time as "10:30"
+              const datePart = apt.date.split('T')[0]; // YYYY-MM-DD
+              const start = new Date(`${datePart}T${apt.slotTime}:00`);
+              const duration = apt.serviceId?.duration || 60; // Default to 60 min if missing
+              const end = new Date(start.getTime() + duration * 60000);
+
+              let title = "Appointment";
+              if (apt.serviceId) title = apt.serviceId.name;
+              if (apt.providerId && apt.providerId.userId) title += ` with ${apt.providerId.userId.name}`;
+
+              return {
+                  id: apt._id,
+                  title,
+                  start,
+                  end,
+                  status: apt.status,
+                  resource: apt
+              };
+          });
+          setEvents(calendarEvents);
+
+      } catch (err) {
+          console.error(err);
+          toast.error("Failed to load dashboard data");
+      } finally {
+          setLoading(false);
       }
   };
+
+  const handleCancel = async (id) => {
+      if(!window.confirm("Are you sure you want to cancel this appointment?")) return;
+
+      try {
+          await axios.put(`/appointments/${id}/cancel`);
+          toast.success("Appointment cancelled");
+          fetchData(); // Refresh data
+      } catch (err) {
+          toast.error("Failed to cancel appointment");
+      }
+  };
+
+  const eventStyleGetter = (event) => {
+      let backgroundColor = '#3B82F6'; // Blue default
+      if (event.status === 'confirmed') backgroundColor = '#10B981'; // Green
+      if (event.status === 'cancelled') backgroundColor = '#EF4444'; // Red
+      if (event.status === 'pending') backgroundColor = '#F59E0B'; // Yellow
+
+      return {
+          style: {
+              backgroundColor,
+              borderRadius: '5px',
+              opacity: 0.8,
+              color: 'white',
+              border: '0px',
+              display: 'block'
+          }
+      };
+  };
+
+  const CustomEvent = ({ event }) => (
+      <div className="text-xs">
+          <strong>{event.title}</strong>
+          <p>{event.status}</p>
+      </div>
+  );
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Welcome Header */}
-      <div className="mb-8 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-2xl p-8 text-white shadow-lg">
-        <h1 className="text-3xl font-bold">Welcome back, {user?.name}!</h1>
-        <p className="mt-2 text-indigo-100 opacity-90">Ready to book your next appointment? Check out our top providers below.</p>
+      <div className="mb-8 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-2xl p-8 text-white shadow-lg flex justify-between items-center">
+        <div>
+            <h1 className="text-3xl font-bold">Welcome back, {user?.name}!</h1>
+            <p className="mt-2 text-indigo-100 opacity-90">Manage your schedule and bookings.</p>
+        </div>
+        <button onClick={fetchData} className="bg-white/20 hover:bg-white/30 p-2 rounded-full transition-colors">
+            <RefreshCw size={20} />
+        </button>
       </div>
 
       {/* Tabs */}
@@ -73,7 +141,7 @@ const UserDashboard = () => {
             className={`pb-4 text-sm font-medium transition-colors border-b-2 ${activeTab === 'appointments' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
             onClick={() => setActiveTab('appointments')}
         >
-            My Appointments
+            My Calendar
         </button>
       </div>
 
@@ -88,7 +156,20 @@ const UserDashboard = () => {
                              </div>
                              <div>
                                  <h3 className="font-bold text-lg text-slate-900">{p.userId?.name}</h3>
-                                 <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold">Service Provider</p>
+                                 <div className="flex flex-wrap gap-1 mt-1">
+                                    {p.services && p.services.length > 0 ? (
+                                        p.services.slice(0, 3).map(s => (
+                                            <span key={s._id} className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium border border-indigo-100">
+                                                {s.name}
+                                            </span>
+                                        ))
+                                    ) : (
+                                        <span className="text-xs text-slate-400 italic">No services listed</span>
+                                    )}
+                                    {p.services && p.services.length > 3 && (
+                                        <span className="text-xs text-slate-500 font-medium">+ {p.services.length - 3}</span>
+                                    )}
+                                 </div>
                              </div>
                         </div>
                         <p className="text-slate-600 text-sm mb-4 line-clamp-3 leading-relaxed">{p.bio || "No bio available."}</p>
@@ -100,43 +181,26 @@ const UserDashboard = () => {
                     </div>
                 </div>
             ))}
-            {providers.length === 0 && <div className="col-span-3 text-center py-12 text-slate-500">No providers found.</div>}
+            {providers.length === 0 && !loading && <div className="col-span-3 text-center py-12 text-slate-500">No providers found.</div>}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {appointments.map(apt => (
-                <div key={apt._id} className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-                    <div className="flex justify-between items-start mb-4">
-                        <div>
-                            <p className="text-sm text-slate-500 mb-1">Provider</p>
-                            <h3 className="font-bold text-lg text-slate-900">{apt.providerName}</h3>
-                        </div>
-                        {getStatusBadge(apt.status)}
-                    </div>
-                    
-                    <div className="space-y-3 mb-6">
-                        <div className="flex items-center text-sm text-slate-600">
-                            <Calendar size={16} className="mr-2 text-slate-400"/>
-                            {new Date(apt.date).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' })}
-                        </div>
-                        <div className="flex items-center text-sm text-slate-600">
-                            <Clock size={16} className="mr-2 text-slate-400"/>
-                            {apt.time}
-                        </div>
-                        <div className="flex items-center text-sm text-slate-600">
-                            <User size={16} className="mr-2 text-slate-400"/>
-                            {apt.serviceName}
-                        </div>
-                    </div>
-
-                    {apt.status !== 'cancelled' && (
-                        <button className="w-full text-center text-red-600 text-sm font-medium py-2 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
-                            Cancel Appointment
-                        </button>
-                    )}
-                </div>
-            ))}
-            {appointments.length === 0 && <div className="col-span-3 text-center py-12 text-slate-500">No appointments found.</div>}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 h-[600px]">
+            <Calendar
+                localizer={localizer}
+                events={events}
+                startAccessor="start"
+                endAccessor="end"
+                style={{ height: '100%' }}
+                eventPropGetter={eventStyleGetter}
+                components={{
+                    event: CustomEvent
+                }}
+                onSelectEvent={(event) => {
+                    if(event.status !== 'cancelled' && window.confirm(`Cancel appointment: ${event.title}?`)) {
+                        handleCancel(event.id);
+                    }
+                }}
+            />
         </div>
       )}
     </div>

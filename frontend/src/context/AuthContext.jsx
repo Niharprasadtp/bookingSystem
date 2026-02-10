@@ -1,4 +1,5 @@
 import { createContext, useState, useEffect } from "react";
+import axios from "../api/axios";
 
 const AuthContext = createContext();
 
@@ -7,7 +8,7 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const API_URL = `${import.meta.env.VITE_API_URL}/auth`;
+
 
   useEffect(() => {
     const storedUser = localStorage.getItem("user");
@@ -21,16 +22,8 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
-      const response = await fetch(`${API_URL}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || "Login failed");
-      }
+      const response = await axios.post("/auth/login", { email, password });
+      const data = response.data;
 
       setUser(data);
       setToken(data.token);
@@ -38,30 +31,25 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem("token", data.token);
       return data;
     } catch (error) {
-      throw error;
+        // Axios throws on 4xx/5xx, access error.response.data
+        const message = error.response?.data?.message || "Login failed";
+        throw new Error(message);
     }
   };
 
   const register = async (name, email, password, role, phone) => {
     try {
-      const response = await fetch(`${API_URL}/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password, role, phone }),
-      });
-      const data = await response.json();
+        const response = await axios.post("/auth/register", { name, email, password, role, phone });
+        const data = response.data;
 
-      if (!response.ok) {
-        throw new Error(data.message || "Registration failed");
-      }
-
-      setUser(data);
-      setToken(data.token);
-      localStorage.setItem("user", JSON.stringify(data));
-      localStorage.setItem("token", data.token);
-      return data;
+        setUser(data);
+        setToken(data.token);
+        localStorage.setItem("user", JSON.stringify(data));
+        localStorage.setItem("token", data.token);
+        return data;
     } catch (error) {
-      throw error;
+        const message = error.response?.data?.message || "Registration failed";
+        throw new Error(message);
     }
   };
 
