@@ -2,13 +2,11 @@ import Provider from '../models/Provider.js';
 import Service from '../models/Service.js';
 import Appointment from '../models/Appointment.js';
 
-// Helper to calculate minutes from "HH:MM"
 const getMinutes = (timeStr) => {
   const [hours, minutes] = timeStr.split(':').map(Number);
   return hours * 60 + minutes;
 };
 
-// Helper to format minutes back to "HH:MM"
 const formatTime = (minutes) => {
   const h = Math.floor(minutes / 60).toString().padStart(2, '0');
   const m = (minutes % 60).toString().padStart(2, '0');
@@ -16,100 +14,81 @@ const formatTime = (minutes) => {
 };
 
 export const getAvailableSlots = async (req, res) => {
-  const { providerId, serviceId, date } = req.query; // date in YYYY-MM-DD format
+  const { providerId, serviceId, date } = req.query;
 
   if (!providerId || !serviceId || !date) {
-    return res.status(400).json({ message: 'Missing required parameters' });
+    return res.status(400).json({ message: 'Missing parameters' });
   }
 
   try {
-    // 1. Fetch Provider and Schedule
+    const service = await Service.findById(serviceId);
+    if (!service) return res.status(404).json({ message: 'Service not found' });
+
     const provider = await Provider.findById(providerId);
     if (!provider) return res.status(404).json({ message: 'Provider not found' });
 
-    const dayOfWeek = new Date(date).toLocaleString('en-US', { weekday: 'long' });
+    const bookingDate = new Date(date);
+    const dayOfWeek = bookingDate.toLocaleString('en-US', { weekday: 'long' });
     const schedule = provider.schedule[dayOfWeek];
 
-    // 2. Check if Day Off
     if (!schedule || schedule.isDayOff) {
-      return res.json([]); // Return empty if day off
+      return res.json([]);
     }
 
-    // 3. Fetch Service Duration
-    const service = await Service.findById(serviceId);
-    if (!service) return res.status(404).json({ message: 'Service not found' });
-    
-    const serviceDuration = service.duration;
-
-    // 4. Fetch Existing Appointments
-    // We need to match appointments on that specific DATE
-    // Assuming 'date' in Appointment model matches the YYYY-MM-DD part or is a full object
-    // For simplicity, let's assume we query by range of that day
+    // Set time range for the selected day
     const startOfDay = new Date(date);
-    startOfDay.setHours(0,0,0,0);
+    startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date(date);
-    endOfDay.setHours(23,59,59,999);
+    endOfDay.setHours(23, 59, 59, 999);
 
+    // Fetch active appointments for the day
     const appointments = await Appointment.find({
-      providerId: providerId,
-      date: {
-        $gte: startOfDay,
-        $lte: endOfDay
-      },
-      status: { $ne: 'cancelled' } // Don't count cancelled
-    });
-
-    // 5. Generate Slots Loop
-    const availSlots = [];
-    let currentMinutes = getMinutes(schedule.startTime);
-    const endMinutes = getMinutes(schedule.endTime);
-
-    // Get current time in minutes if the request date is today
-    const now = new Date();
-    const isToday = new Date(date).toDateString() === now.toDateString();
-    const currentTimeMinutes = isToday ? now.getHours() * 60 + now.getMinutes() : -1;
-
-    // Fetch appointments ONCE before loop for efficiency
-    const appointmentsWithService = await Appointment.find({
-      providerId: providerId,
-      date: {
-        $gte: startOfDay,
-        $lte: endOfDay
-      },
+      providerId,
+      date: { $gte: startOfDay, $lte: endOfDay },
       status: { $ne: 'cancelled' }
     }).populate('serviceId');
 
-    while (currentMinutes + serviceDuration <= endMinutes) {
-      const slotStart = currentMinutes;
-      const slotEnd = currentMinutes + serviceDuration;
+    // Convert existing appointments to minute ranges
+    const busyIntervals = appointments.map(appt => {
+      const start = getMinutes(appt.slotTime);
+      const duration = appt.serviceId ? appt.serviceId.duration : 30;
+      return { start, end: start + duration };
+    });
 
-      // Skip past slots if today
-      if (isToday && slotStart <= currentTimeMinutes) {
-         currentMinutes += 30;
-         continue;
+    const availableSlots = [];
+    const serviceDuration = service.duration;
+    let currentSlotStart = getMinutes(schedule.startTime);
+    const dayEndTime = getMinutes(schedule.endTime);
+
+    const now = new Date();
+    const isToday = bookingDate.toDateString() === now.toDateString();
+    const currentMinutesNow = now.getHours() * 60 + now.getMinutes();
+
+    while (currentSlotStart + serviceDuration <= dayEndTime) {
+      const slotEnd = currentSlotStart + serviceDuration;
+
+      // Skip past times if booking for today
+      if (isToday && currentSlotStart <= currentMinutesNow) {
+        currentSlotStart += 30;
+        continue;
       }
 
-      const isOverlapping = appointmentsWithService.some(appt => {
-        if (!appt.serviceId) return false; // Safety check
-        const apptStart = getMinutes(appt.slotTime);
-        const apptDuration = appt.serviceId.duration;
-        const apptEnd = apptStart + apptDuration;
-
-        // Overlap logic: (StartA < EndB) and (EndA > StartB)
-        return (slotStart < apptEnd && slotEnd > apptStart);
+      // Check for overlap with existing appointments
+      const isBusy = busyIntervals.some(busy => {
+        return (currentSlotStart < busy.end && slotEnd > busy.start);
       });
 
-      if (!isOverlapping) {
-        availSlots.push(formatTime(slotStart));
+      if (!isBusy) {
+        availableSlots.push(formatTime(currentSlotStart));
       }
 
-      // Step: 30 minutes
-      currentMinutes += 30;
+      currentSlotStart += 30;
     }
 
-    res.json(availSlots);
+    res.json(availableSlots);
+
   } catch (error) {
-     console.error(error);
-     res.status(500).json({ message: error.message });
+    console.error('Error calculating slots:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
   }
 };

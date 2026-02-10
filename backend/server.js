@@ -19,6 +19,12 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Request Logger
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.originalUrl}`);
+  next();
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/providers', providerRoutes);
